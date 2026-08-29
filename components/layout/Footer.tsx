@@ -60,9 +60,8 @@ export const Footer: React.FC = () => {
           <div className="space-y-3">
             <h4 className="text-xs font-bold uppercase tracking-wider text-on-surface">Trust & Legal</h4>
             <ul className="space-y-2 text-sm text-secondary">
-              <li><a href="#" className="hover:text-primary transition-colors">Security Architecture</a></li>
-              <li><a href="#" className="hover:text-primary transition-colors">Privacy Policy</a></li>
-              <li><a href="#" className="hover:text-primary transition-colors">Terms of Service</a></li>
+              <li><Link href="/privacy-policy" className="hover:text-primary transition-colors">Privacy Policy</Link></li>
+              <li><Link href="/terms" className="hover:text-primary transition-colors">Terms of Service</Link></li>
               <li><a href="#" className="hover:text-primary transition-colors">Data Processing Addendum</a></li>
               <li><a href="#" className="hover:text-primary transition-colors">Sitemap</a></li>
             </ul>
