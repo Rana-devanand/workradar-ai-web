@@ -1,11 +1,27 @@
 "use client";
 
 import React, { useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Modal } from "@/components/common/Modal";
 import { Button } from "@/components/common/Button";
 import { Input } from "@/components/common/Input";
-import { Badge } from "@/components/common/Badge";
-import { Radar, Sparkles, CheckCircle2, ShieldCheck, Mail, Lock } from "lucide-react";
+import {
+  useLoginMutation,
+  useRegisterMutation,
+  useGoogleLoginMutation,
+} from "@/lib/redux/services/authApi";
+import { useAppDispatch } from "@/lib/redux/hooks";
+import { setCredentials } from "@/lib/redux/slices/authSlice";
+import { supabase } from "@/lib/supabaseClient";
+import {
+  CheckCircle2,
+  Mail,
+  Lock,
+  User,
+  AlertCircle,
+  Loader2,
+} from "lucide-react";
 
 export interface AuthModalProps {
   isOpen: boolean;
@@ -20,14 +36,109 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   initialMode = "signup",
   defaultPlan,
 }) => {
+  const router = useRouter();
+  const dispatch = useAppDispatch();
   const [mode, setMode] = useState<"signup" | "login">(initialMode);
+  const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isSuccess, setIsSuccess] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  // RTK Query Mutations
+  const [loginMutation, { isLoading: isLoginLoading }] = useLoginMutation();
+  const [registerMutation, { isLoading: isRegisterLoading }] = useRegisterMutation();
+  const [googleLoginMutation, { isLoading: isGoogleLoading }] = useGoogleLoginMutation();
+
+  const isLoading = isLoginLoading || isRegisterLoading || isGoogleLoading;
+
+  // Real Email & Password Login / Signup
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setIsSuccess(true);
+    setErrorMessage(null);
+
+    try {
+      if (mode === "login") {
+        const response = await loginMutation({ email, password }).unwrap();
+
+        if (response.success && response.data?.accessToken) {
+          dispatch(
+            setCredentials({
+              user: response.data.user,
+              accessToken: response.data.accessToken,
+              refreshToken: response.data.refreshToken,
+            })
+          );
+          onClose();
+          router.push("/dashboard");
+        } else {
+          setErrorMessage(response.message || "Invalid email or password");
+        }
+      } else {
+        const response = await registerMutation({
+          name: fullName || email.split("@")[0],
+          fullName: fullName || email.split("@")[0],
+          email,
+          password,
+        }).unwrap();
+
+        if (response.success) {
+          if (response.data?.accessToken && response.data?.user) {
+            dispatch(
+              setCredentials({
+                user: response.data.user,
+                accessToken: response.data.accessToken,
+                refreshToken: response.data.refreshToken,
+              })
+            );
+          }
+          setIsSuccess(true);
+        } else {
+          setErrorMessage(response.message || "Failed to create account");
+        }
+      }
+    } catch (err: any) {
+      const msg =
+        err?.data?.message ||
+        err?.data?.error ||
+        err?.error ||
+        "Authentication failed. Please check your credentials and try again.";
+      setErrorMessage(typeof msg === "string" ? msg : "Authentication request failed");
+    }
+  };
+
+  // Real Google OAuth Flow via Supabase & Google Client ID
+  const handleGoogleOAuth = async () => {
+    setErrorMessage(null);
+    try {
+      // 1. Trigger real Google OAuth with Supabase / Google OAuth 2.0
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: {
+          redirectTo: typeof window !== "undefined" ? `${window.location.origin}/dashboard` : undefined,
+          queryParams: {
+            access_type: "offline",
+            prompt: "consent",
+          },
+        },
+      });
+
+      if (error) {
+        // Direct OAuth URL fallback with Google Client ID
+        const googleClientId =
+          process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ||
+          "637926928192-g0lcl8dhafr9fbdqmn9cvadrcsngjh90.apps.googleusercontent.com";
+        const redirectUri = encodeURIComponent(
+          typeof window !== "undefined" ? `${window.location.origin}/dashboard` : "http://localhost:3000/dashboard"
+        );
+        const scope = encodeURIComponent("openid email profile");
+        const oauthUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${googleClientId}&redirect_uri=${redirectUri}&response_type=token&scope=${scope}&prompt=select_account`;
+
+        window.location.href = oauthUrl;
+      }
+    } catch (err: any) {
+      setErrorMessage(err?.message || "Google authentication failed");
+    }
   };
 
   return (
@@ -53,27 +164,48 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           <div className="h-12 w-12 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto">
             <CheckCircle2 className="w-7 h-7" />
           </div>
-          <h4 className="text-lg font-bold text-on-surface">Welcome to WorkRadar AI!</h4>
+          <h4 className="text-lg font-bold text-on-surface">Account Created Successfully!</h4>
           <p className="text-xs text-secondary max-w-xs mx-auto">
-            We've sent a magic activation link to <span className="font-semibold text-on-surface">{email || "your email"}</span>. Click it to connect your first integration.
+            Welcome to WorkRadar AI. Let&apos;s set up your workspace operating preferences.
           </p>
-          <Button
-            variant="primary"
-            size="sm"
-            onClick={onClose}
-            className="w-full text-xs uppercase tracking-wider font-bold"
-          >
-            Close & Go to Inbox
-          </Button>
+          <div className="flex flex-col gap-2">
+            <Link
+              href="/onboarding"
+              onClick={onClose}
+              className="w-full inline-flex items-center justify-center py-2.5 rounded-lg bg-primary text-white text-xs uppercase tracking-wider font-bold shadow-md hover:bg-primary-hover transition-colors"
+            >
+              Set Up Workspace &rarr;
+            </Link>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                onClose();
+                router.push("/dashboard");
+              }}
+              className="w-full text-xs text-secondary"
+            >
+              Go Directly to Dashboard
+            </Button>
+          </div>
         </div>
       ) : (
         <div className="space-y-4">
-          {/* Social OAuth Buttons */}
-          <div className="grid grid-cols-2 gap-3">
+          {/* Error Banner */}
+          {errorMessage && (
+            <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-xs text-red-700 flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <span>{errorMessage}</span>
+            </div>
+          )}
+
+          {/* Real Google OAuth Button */}
+          <div>
             <button
               type="button"
-              onClick={() => setIsSuccess(true)}
-              className="flex items-center justify-center gap-2 py-2.5 px-3 rounded-lg border border-outline-variant hover:bg-surface-container-low transition-colors text-xs font-semibold text-on-surface shadow-xs"
+              onClick={handleGoogleOAuth}
+              disabled={isLoading}
+              className="w-full flex items-center justify-center gap-2.5 py-2.5 px-4 rounded-xl border border-outline-variant hover:bg-surface-container-low transition-all text-xs font-bold text-on-surface shadow-xs cursor-pointer disabled:opacity-50"
             >
               <svg className="w-4 h-4" viewBox="0 0 24 24">
                 <path
@@ -93,18 +225,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.35 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z"
                 />
               </svg>
-              <span>Google</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setIsSuccess(true)}
-              className="flex items-center justify-center gap-2 py-2.5 px-3 rounded-lg border border-outline-variant hover:bg-surface-container-low transition-colors text-xs font-semibold text-on-surface shadow-xs"
-            >
-              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-                <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z" />
-              </svg>
-              <span>GitHub</span>
+              <span>Continue with Google</span>
             </button>
           </div>
 
@@ -117,7 +238,20 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             </span>
           </div>
 
+          {/* Email / Password Form */}
           <form onSubmit={handleSubmit} className="space-y-3">
+            {mode === "signup" && (
+              <Input
+                label="Full Name"
+                type="text"
+                required
+                placeholder="Alex Morgan"
+                value={fullName}
+                onChange={(e) => setFullName(e.target.value)}
+                leftIcon={<User className="w-4 h-4" />}
+              />
+            )}
+
             <Input
               label="Work Email"
               type="email"
@@ -142,9 +276,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               type="submit"
               variant="primary"
               size="md"
-              className="w-full text-xs uppercase tracking-wider font-bold py-3 mt-2"
+              disabled={isLoading}
+              className="w-full text-xs uppercase tracking-wider font-bold py-3 mt-2 flex items-center justify-center gap-2"
             >
-              {mode === "signup" ? "Start Free 14-Day Trial" : "Sign In"}
+              {isLoading && <Loader2 className="w-4 h-4 animate-spin" />}
+              <span>{mode === "signup" ? "Start Free 14-Day Trial" : "Sign In"}</span>
             </Button>
           </form>
 
@@ -155,19 +291,25 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 Already have an account?{" "}
                 <button
                   type="button"
-                  onClick={() => setMode("login")}
-                  className="font-bold text-primary hover:underline"
+                  onClick={() => {
+                    setMode("login");
+                    setErrorMessage(null);
+                  }}
+                  className="font-bold text-primary hover:underline cursor-pointer"
                 >
                   Log in
                 </button>
               </p>
             ) : (
               <p>
-                Don't have an account yet?{" "}
+                Don&apos;t have an account yet?{" "}
                 <button
                   type="button"
-                  onClick={() => setMode("signup")}
-                  className="font-bold text-primary hover:underline"
+                  onClick={() => {
+                    setMode("signup");
+                    setErrorMessage(null);
+                  }}
+                  className="font-bold text-primary hover:underline cursor-pointer"
                 >
                   Sign up free
                 </button>
@@ -179,4 +321,3 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     </Modal>
   );
 };
-
